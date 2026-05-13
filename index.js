@@ -96,7 +96,7 @@ io.on('connection', (socket) => {
       socket.emit('playerAssigned', { roomCode, color: assignedColor });
 
       const activeColorsList = Object.values(roomAssignments[roomCode]);
-      io.to(roomCode).emit('activePlayersUpdate', { roomCode, colors: activeColorsList });
+     io.to(roomCode).emit('activePlayersUpdate', activeColorsList);
 
       console.log(`Jucătorul ${socket.id} a cerut și a primit: ${assignedColor} (camera ${roomCode})`);
     } else {
@@ -183,7 +183,7 @@ io.on('connection', (socket) => {
 
         delete roomAssignments[roomCode][socket.id];
         const activeColorsList = Object.values(roomAssignments[roomCode]);
-        io.to(roomCode).emit('activePlayersUpdate', { roomCode, colors: activeColorsList });
+       io.to(roomCode).emit('activePlayersUpdate', activeColorsList);
         console.log(`Jucătorul ${colorToFree} a plecat din camera ${roomCode}. Culoarea e din nou liberă.`);
       }
 
