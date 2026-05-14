@@ -1,3 +1,4 @@
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -138,6 +139,22 @@ io.on('connection', (socket) => {
       console.log(`Tentativă invalidă! ${socket.id} (care e ${myAssignedColor}) a vrut să mute ${data.color}`);
     }
   });
+
+// 4. LOGICA PENTRU CHAT
+ socket.on('sendMessage', (data) => {
+    // ALARMA: Printează absolut orice primește, înainte de a verifica!
+    console.log("[DEBUG SERVER] A intrat ceva pe țeava de chat:", data);
+
+    const roomCode = data && data.roomCode;
+    if (!roomCode) {
+      console.log("Eroare: Mesajul a ajuns, dar nu are roomCode!");
+      return;
+    }
+    
+    console.log(`[CHAT] Mesaj valid în ${roomCode} de la ${data.playerName}: ${data.text}`);
+    io.to(roomCode).emit('receiveMessage', data);
+  });
+
 
   // Când cineva a terminat mutarea, serverul decide următorul jucător activ
   socket.on('moveFinished', (data) => {
