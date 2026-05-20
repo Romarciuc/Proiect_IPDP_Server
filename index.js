@@ -179,30 +179,42 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 3. DECONECTARE: Punem culoarea înapoi în listă pentru altcineva
+ // 3. DECONECTARE BLINDATA
   socket.on('disconnect', () => {
-    const joinedRooms = Array.from(socket.rooms).filter((room) => room !== socket.id);
+    console.log(`Conexiune inchisa pentru: ${socket.id}`);
 
-    joinedRooms.forEach((roomCode) => {
+    const roomsToClean = [];
+    for (const roomCode in roomActivePlayers) {
+      if (roomActivePlayers[roomCode].includes(socket.id)) {
+        roomsToClean.push(roomCode);
+      }
+    }
+
+    roomsToClean.forEach((roomCode) => {
       const activePlayers = roomActivePlayers[roomCode];
+      
       if (activePlayers) {
         const activeIndex = activePlayers.indexOf(socket.id);
         if (activeIndex !== -1) {
+          
+          const isHisTurn = (activeIndex === roomTurnIndex[roomCode]);
           activePlayers.splice(activeIndex, 1);
 
           if (activePlayers.length === 0) {
             roomTurnIndex[roomCode] = 0;
-          } else if (activeIndex < roomTurnIndex[roomCode]) {
-            roomTurnIndex[roomCode] -= 1;
-          } else if (activeIndex === roomTurnIndex[roomCode]) {
-            if (roomTurnIndex[roomCode] >= activePlayers.length) {
+          } else {
+            if (activeIndex < roomTurnIndex[roomCode]) {
+              roomTurnIndex[roomCode] -= 1;
+            } else if (roomTurnIndex[roomCode] >= activePlayers.length) {
               roomTurnIndex[roomCode] = 0;
             }
-
-            const nextPlayerId = activePlayers[roomTurnIndex[roomCode]];
-            const nextColor = roomAssignments[roomCode] && roomAssignments[roomCode][nextPlayerId];
-            if (nextColor) {
-              io.to(roomCode).emit('turnUpdate', { roomCode, color: nextColor });
+            
+            if (isHisTurn) {
+              const nextPlayerId = activePlayers[roomTurnIndex[roomCode]];
+              const nextColor = roomAssignments[roomCode] && roomAssignments[roomCode][nextPlayerId];
+              if (nextColor) {
+                io.to(roomCode).emit('turnUpdate', { roomCode, color: nextColor });
+              }
             }
           }
         }
@@ -218,19 +230,19 @@ io.on('connection', (socket) => {
         if (colorIndex !== -1) {
           roomColors[roomCode].splice(colorIndex, 1);
         }
-
         delete roomAssignments[roomCode][socket.id];
+        
         const activePlayersList = buildActivePlayersList(roomCode);
         io.to(roomCode).emit('activePlayersUpdate', activePlayersList);
-        console.log(`Jucătorul ${colorToFree} a plecat din camera ${roomCode}. Culoarea e din nou liberă.`);
       }
-
+      
       cleanupRoomState(roomCode);
     });
   });
-});
+}); // <-- Aici se inchide io.on('connection')
 
+// --- PORNIREA SERVERULUI ---
 const PORT = 3001;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Serverul ascultă pe toate IP-urile la portul ${PORT}`);
+  console.log(`Serverul asculta pe toate IP-urile la portul ${PORT}`);
 });
