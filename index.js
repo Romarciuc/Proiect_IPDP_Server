@@ -1,4 +1,3 @@
-
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -16,43 +15,49 @@ const io = new Server(server, {
   transports: ['websocket']
 });
 
-// --- LOGICA PENTRU GESTIONAREA CULORILOR (PE CAMERE) ---
+// logica pentru gestionarea culorilor si a starii
 const allColors = ['red', 'blue', 'green', 'yellow'];
-const roomColors = {}; // { roomCode: ['red', 'blue'] }
-const roomAssignments = {}; // { roomCode: { socketId: 'red' } }
-const roomNames = {}; // { roomCode: { socketId: 'NumeAles' } }
-const roomActivePlayers = {}; // { roomCode: [socketId1, socketId2] }
-const roomTurnIndex = {}; // { roomCode: 0 }
+const roomColors = {}; 
+const roomAssignments = {}; 
+const roomNames = {}; 
+const roomActivePlayers = {}; 
+const roomTurnIndex = {}; 
+
+// noile memorii pentru reconectare
+const roomBoardState = {}; 
+const roomPlayerIdentities = {}; 
+
+// setari lobby
+const roomMaxPlayers = {}; 
+const roomGameStarted = {}; 
 
 const ensureRoomState = (roomCode) => {
-  if (!roomColors[roomCode]) {
-    roomColors[roomCode] = [];
-  }
-  if (!roomAssignments[roomCode]) {
-    roomAssignments[roomCode] = {};
-  }
-  if (!roomNames[roomCode]) {
-    roomNames[roomCode] = {};
-  }
-  if (!roomActivePlayers[roomCode]) {
-    roomActivePlayers[roomCode] = [];
-  }
-  if (roomTurnIndex[roomCode] === undefined) {
-    roomTurnIndex[roomCode] = 0;
-  }
+  if (!roomColors[roomCode]) roomColors[roomCode] = [];
+  if (!roomAssignments[roomCode]) roomAssignments[roomCode] = {};
+  if (!roomNames[roomCode]) roomNames[roomCode] = {};
+  if (!roomActivePlayers[roomCode]) roomActivePlayers[roomCode] = [];
+  if (roomTurnIndex[roomCode] === undefined) roomTurnIndex[roomCode] = 0;
+  
+  // initializam memoriile si lobby-ul
+  if (!roomBoardState[roomCode]) roomBoardState[roomCode] = null;
+  if (!roomPlayerIdentities[roomCode]) roomPlayerIdentities[roomCode] = {};
+  if (!roomMaxPlayers[roomCode]) roomMaxPlayers[roomCode] = 4;
+  if (!roomGameStarted[roomCode]) roomGameStarted[roomCode] = false;
 };
 
 const cleanupRoomState = (roomCode) => {
   const hasPlayers = roomActivePlayers[roomCode] && roomActivePlayers[roomCode].length > 0;
-  const hasAssignments = roomAssignments[roomCode] && Object.keys(roomAssignments[roomCode]).length > 0;
-  const hasNames = roomNames[roomCode] && Object.keys(roomNames[roomCode]).length > 0;
 
-  if (!hasPlayers && !hasAssignments && !hasNames) {
+  if (!hasPlayers) {
     delete roomColors[roomCode];
     delete roomAssignments[roomCode];
     delete roomNames[roomCode];
     delete roomActivePlayers[roomCode];
     delete roomTurnIndex[roomCode];
+    delete roomBoardState[roomCode];
+    delete roomPlayerIdentities[roomCode];
+    delete roomMaxPlayers[roomCode];
+    delete roomGameStarted[roomCode];
   }
 };
 
@@ -61,128 +66,132 @@ const buildActivePlayersList = (roomCode) => {
   
   return socketIds.map((id) => {
     const color = roomAssignments[roomCode][id];
-    const name = roomNames[roomCode][id] || 'Anonim';
-    
-    // Verificăm să nu trimitem date goale
+    const name = roomNames[roomCode][id] || 'anonim';
     if (!color) return null;
-    
     return { color: color, name: name };
-  }).filter(Boolean); // Elimină orice e nul
+  }).filter(Boolean);
 };
 
 io.on('connection', (socket) => {
-  console.log(`Jucător conectat: ${socket.id}`);
+  console.log(`jucator conectat: ${socket.id}`);
 
-  // 0. INTRARE IN CAMERA: Jucătorul se alătură unei camere
+  // intrare in camera
   socket.on('joinRoom', (roomCode) => {
-    if (!roomCode) {
-      return;
-    }
-
+    if (!roomCode) return;
     socket.join(roomCode);
     ensureRoomState(roomCode);
-    console.log(`Un jucător a intrat în camera: ${roomCode}`);
-
     io.to(roomCode).emit('playerConnected', { roomCode, socketId: socket.id });
   });
 
+  // cerere culoare
   socket.on('requestColor', (data) => {
-  const { roomCode, playerName } = data;
-  if (!roomCode) return;
+    const { roomCode, playerName } = data;
+    if (!roomCode) return;
 
-  ensureRoomState(roomCode);
-  
-  // Salvăm numele imediat
-  roomNames[roomCode][socket.id] = playerName || 'Anonim';
+    ensureRoomState(roomCode);
 
-  // Dacă are deja culoare (ex: de la un refresh), i-o dăm pe aceeași
-  if (roomAssignments[roomCode][socket.id]) {
-    socket.emit('playerAssigned', { roomCode, color: roomAssignments[roomCode][socket.id] });
-  } else {
-    // Alocăm o culoare nouă
-    const availableColors = allColors.filter(c => !roomColors[roomCode].includes(c));
-    if (availableColors.length > 0) {
-      const color = availableColors[0];
-      roomAssignments[roomCode][socket.id] = color;
-      roomColors[roomCode].push(color);
-      roomActivePlayers[roomCode].push(socket.id);
-      
-      socket.emit('playerAssigned', { roomCode, color });
-      
-      // Dacă e primul, e rândul lui
-      if (roomActivePlayers[roomCode].length === 1) {
-        io.to(roomCode).emit('turnUpdate', { roomCode, color });
+    // verificam daca este o reconectare (ca sa nu blocam un jucator care a dat refresh din greseala)
+    const isReconnecting = playerName && roomPlayerIdentities[roomCode] && roomPlayerIdentities[roomCode][playerName];
+
+    // respingem daca e plin sau a inceput meciul, iar el e un jucator complet nou
+    if (!isReconnecting) {
+      if (roomGameStarted[roomCode]) {
+        socket.emit('roomError', { message: 'Meciul a început deja în această cameră!' });
+        return;
+      }
+      if (roomActivePlayers[roomCode].length >= roomMaxPlayers[roomCode]) {
+        socket.emit('roomError', { message: 'Această cameră este deja plină!' });
+        return;
       }
     }
-  }
 
-  // TRITEM LISTA ACTUALIZATĂ (Culoare + Nume) către TOȚI
-  const list = buildActivePlayersList(roomCode);
-  console.log(`[SERVER] Trimit listă nouă în ${roomCode}:`, list);
-  io.to(roomCode).emit('activePlayersUpdate', list);
-});
+    roomNames[roomCode][socket.id] = playerName || 'anonim';
 
-  // 2. LOGICA DE MUTARE: Verificăm dacă jucătorul mută culoarea LUI
+    let myColor;
+
+    if (isReconnecting) {
+      myColor = roomPlayerIdentities[roomCode][playerName];
+      console.log(`[reconectare] ${playerName} a revenit cu culoarea ${myColor}`);
+    } else {
+      // alocam culoare noua
+      const availableColors = allColors.filter(c => !roomColors[roomCode].includes(c));
+      if (availableColors.length > 0) {
+        myColor = availableColors[0];
+        roomPlayerIdentities[roomCode][playerName] = myColor;
+        roomColors[roomCode].push(myColor);
+      }
+    }
+
+    if (myColor) {
+      roomAssignments[roomCode][socket.id] = myColor;
+      if (!roomActivePlayers[roomCode].includes(socket.id)) {
+        roomActivePlayers[roomCode].push(socket.id);
+      }
+      
+      socket.emit('playerAssigned', { roomCode, color: myColor });
+
+      socket.emit('lobbyUpdate', { maxPlayers: roomMaxPlayers[roomCode] });
+      if (roomGameStarted[roomCode]) {
+        socket.emit('gameStarted');
+      }
+
+      if (roomBoardState[roomCode]) {
+        socket.emit('updateBoard', roomBoardState[roomCode]);
+      } else if (roomActivePlayers[roomCode].length === 1) {
+        io.to(roomCode).emit('turnUpdate', { roomCode, color: myColor });
+      }
+    }
+
+    const list = buildActivePlayersList(roomCode);
+    io.to(roomCode).emit('activePlayersUpdate', list);
+  });
+
+  // hostul schimba setarile lobby-ului
+  socket.on('updateMaxPlayers', (data) => {
+    const roomCode = data && data.roomCode;
+    if (!roomCode) return;
+    roomMaxPlayers[roomCode] = data.maxPlayers;
+    io.to(roomCode).emit('lobbyUpdate', { maxPlayers: data.maxPlayers });
+  });
+
+  // hostul da start la joc
+  socket.on('startGame', (data) => {
+    const roomCode = data && data.roomCode;
+    if (!roomCode) return;
+    roomGameStarted[roomCode] = true;
+    io.to(roomCode).emit('gameStarted');
+  });
+
+  // logica mutare
   socket.on('makeMove', (data) => {
     const roomCode = data && data.roomCode;
-    if (!roomCode) {
-      return;
-    }
+    if (!roomCode) return;
 
     const myAssignedColor = roomAssignments[roomCode] && roomAssignments[roomCode][socket.id];
 
-    // Validare simplă: serverul permite mutarea doar dacă e culoarea atribuită
     if (myAssignedColor === data.color) {
-      console.log(`Mutare validă (${myAssignedColor}):`, data);
+      if (!roomBoardState[roomCode]) roomBoardState[roomCode] = {};
+      
+      if (data.pawns) roomBoardState[roomCode].pawns = data.pawns;
+      if (data.turn) roomBoardState[roomCode].turn = data.turn;
+      if (data.diceValue !== undefined) roomBoardState[roomCode].diceValue = data.diceValue;
+      if (data.actionPhase) roomBoardState[roomCode].actionPhase = data.actionPhase;
+      if (data.extraRollActive !== undefined) roomBoardState[roomCode].extraRollActive = data.extraRollActive;
+      if (data.winner) roomBoardState[roomCode].winner = data.winner;
+
       io.to(roomCode).emit('updateBoard', data);
-    } else {
-      console.log(`Tentativă invalidă! ${socket.id} (care e ${myAssignedColor}) a vrut să mute ${data.color}`);
     }
   });
 
-// 4. LOGICA PENTRU CHAT
- socket.on('sendMessage', (data) => {
-    // ALARMA: Printează absolut orice primește, înainte de a verifica!
-    console.log("[DEBUG SERVER] A intrat ceva pe țeava de chat:", data);
-
+  // chat
+  socket.on('sendMessage', (data) => {
     const roomCode = data && data.roomCode;
-    if (!roomCode) {
-      console.log("Eroare: Mesajul a ajuns, dar nu are roomCode!");
-      return;
-    }
-    
-    console.log(`[CHAT] Mesaj valid în ${roomCode} de la ${data.playerName}: ${data.text}`);
+    if (!roomCode) return;
     io.to(roomCode).emit('receiveMessage', data);
   });
 
-
-  // Când cineva a terminat mutarea, serverul decide următorul jucător activ
-  socket.on('moveFinished', (data) => {
-    const roomCode = data && data.roomCode;
-    if (!roomCode || !roomActivePlayers[roomCode] || roomActivePlayers[roomCode].length === 0) {
-      return;
-    }
-
-    const activePlayers = roomActivePlayers[roomCode];
-
-    const currentPlayerId = activePlayers[roomTurnIndex[roomCode]];
-    if (socket.id !== currentPlayerId) {
-      return;
-    }
-
-    roomTurnIndex[roomCode] = (roomTurnIndex[roomCode] + 1) % activePlayers.length;
-    const nextPlayerId = activePlayers[roomTurnIndex[roomCode]];
-    const nextColor = roomAssignments[roomCode] && roomAssignments[roomCode][nextPlayerId];
-
-    if (nextColor) {
-      io.to(roomCode).emit('turnUpdate', { roomCode, color: nextColor });
-    }
-  });
-
- // 3. DECONECTARE BLINDATA
+  // deconectare
   socket.on('disconnect', () => {
-    console.log(`Conexiune inchisa pentru: ${socket.id}`);
-
     const roomsToClean = [];
     for (const roomCode in roomActivePlayers) {
       if (roomActivePlayers[roomCode].includes(socket.id)) {
@@ -224,25 +233,19 @@ io.on('connection', (socket) => {
         delete roomNames[roomCode][socket.id];
       }
 
-      const colorToFree = roomAssignments[roomCode] && roomAssignments[roomCode][socket.id];
-      if (colorToFree) {
-        const colorIndex = roomColors[roomCode] ? roomColors[roomCode].indexOf(colorToFree) : -1;
-        if (colorIndex !== -1) {
-          roomColors[roomCode].splice(colorIndex, 1);
-        }
+      if (roomAssignments[roomCode]) {
         delete roomAssignments[roomCode][socket.id];
-        
-        const activePlayersList = buildActivePlayersList(roomCode);
-        io.to(roomCode).emit('activePlayersUpdate', activePlayersList);
       }
+      
+      const activePlayersList = buildActivePlayersList(roomCode);
+      io.to(roomCode).emit('activePlayersUpdate', activePlayersList);
       
       cleanupRoomState(roomCode);
     });
   });
-}); // <-- Aici se inchide io.on('connection')
+});
 
-// --- PORNIREA SERVERULUI ---
 const PORT = 3001;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Serverul asculta pe toate IP-urile la portul ${PORT}`);
+  console.log(`serverul asculta pe toate ip-urile la portul ${PORT}`);
 });
