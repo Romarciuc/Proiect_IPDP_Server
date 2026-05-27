@@ -1,3 +1,5 @@
+require('dotenv').config();
+const mongoose = require('mongoose');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -5,6 +7,19 @@ const cors = require('cors');
 
 const app = express();
 app.use(cors());
+app.use(express.json());
+
+// --- BAZA DE DATE MONGODB ---
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("Conectat cu succes la baza de date MongoDB! "))
+  .catch((err) => console.error("Eroare la conectare MongoDB:", err));
+
+const utilizatorSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  victorii: { type: Number, default: 0 }
+});
+const Utilizator = mongoose.model('Utilizator', utilizatorSchema);
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -71,6 +86,38 @@ const buildActivePlayersList = (roomCode) => {
     return { color: color, name: name };
   }).filter(Boolean);
 };
+
+// --- RUTE API ---
+app.post('/api/inregistrare', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    const utilizatorExistent = await Utilizator.findOne({ username });
+
+    if (utilizatorExistent) {
+      return res.status(400).json({ eroare: "Acest nume este deja folosit!" });
+    }
+
+    await Utilizator.create({ username, password });
+    res.json({ succes: true, mesaj: "Cont creat cu succes!" });
+  } catch (err) {
+    res.status(500).json({ eroare: "Eroare la server." });
+  }
+});
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    const utilizator = await Utilizator.findOne({ username, password });
+
+    if (!utilizator) {
+      return res.status(401).json({ eroare: "Nume sau parolă incorectă!" });
+    }
+
+    res.json({ succes: true, username: utilizator.username });
+  } catch (err) {
+    res.status(500).json({ eroare: "Eroare la server." });
+  }
+});
 
 io.on('connection', (socket) => {
   console.log(`jucator conectat: ${socket.id}`);
