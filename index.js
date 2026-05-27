@@ -119,6 +119,17 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+// Ruta pentru Clasament
+app.get('/api/clasament', async (req, res) => {
+  try {
+    // Cautam toti utilizatorii, luam doar username si victorii, ii sortam descrescator si luam primii 10
+    const top = await Utilizator.find({}, 'username victorii').sort({ victorii: -1 }).limit(10);
+    res.json(top);
+  } catch (err) {
+    res.status(500).json({ eroare: "Eroare la aducerea clasamentului." });
+  }
+});
+
 io.on('connection', (socket) => {
   console.log(`jucator conectat: ${socket.id}`);
 
