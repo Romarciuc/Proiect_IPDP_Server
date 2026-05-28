@@ -119,6 +119,30 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+// Ruta speciala pentru Google
+app.post('/api/login-google', async (req, res) => {
+  try {
+    const { username } = req.body;
+
+    // 1. Cautam daca jucatorul a mai intrat vreodata cu Google
+    let utilizator = await Utilizator.findOne({ username });
+
+    // 2. Daca e prima data cand joaca, il cream acum in baza de date!
+    if (!utilizator) {
+      utilizator = await Utilizator.create({
+        username: username,
+        password: "cont_creat_automat_din_google" // Acest truc fenteaza regula parolei obligatorii!
+      });
+      console.log(`Jucator nou din Google salvat in DB: ${username}`);
+    }
+
+    res.json({ succes: true, username: utilizator.username });
+  } catch (err) {
+    console.error("Eroare la salvarea din Google:", err);
+    res.status(500).json({ eroare: "Eroare la server." });
+  }
+});
+
 // Ruta pentru Clasament
 app.get('/api/clasament', async (req, res) => {
   try {
