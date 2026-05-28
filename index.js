@@ -119,6 +119,22 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+// Ruta pentru a adauga o victorie
+app.post('/api/victorie', async (req, res) => {
+  try {
+    const { username } = req.body;
+    // Cauta jucatorul si ii creste scorul de victorii cu +1
+    await Utilizator.findOneAndUpdate(
+      { username: username },
+      { $inc: { victorii: 1 } }
+    );
+    res.json({ succes: true, mesaj: "Victorie adăugată!" });
+  } catch (err) {
+    console.error("Eroare la adăugarea victoriei:", err);
+    res.status(500).json({ eroare: "Eroare la server." });
+  }
+});
+
 // Ruta speciala pentru Google
 app.post('/api/login-google', async (req, res) => {
   try {
